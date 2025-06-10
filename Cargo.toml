@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/ic-mockery-macro", "crates/ic-mockery", "canister"]
+
+resolver = "2"
+
+# Metadata for crates.io
+[workspace.package]
+version = "0.1.0"
+authors = ["Dan B (https://x.com/0xVersion)"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/liquidium/ic-mockery"
+description = "A testing and mocking framework for Internet Computer (IC) canister development"
+keywords = ["internet-computer", "dfinity", "testing", "rust","mocking", "canister"]
+categories = ["development-tools::testing", "wasm"]
+
+[workspace.dependencies]
+candid = "0.10.14"
+ic-cdk = "0.17.2"
+ic-cdk-macros = "0.17.1"
+pocket-ic = "9.0.2"
+serde = "1.0.219"
+serde_json = "1.0.140"
+thiserror = "2.0.12"
+syn = { version = "2.0", features = ["full"] }
+quote = "1.0"
