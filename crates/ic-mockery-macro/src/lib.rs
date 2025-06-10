@@ -19,24 +19,32 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let sig = &method.sig;
             let name_str = sig.ident.to_string();
 
-            // detect async fn returning Result<_,_>
             let is_async = sig.asyncness.is_some();
-            let returns_result = matches!(
-                &sig.output,
-                syn::ReturnType::Type(_, ty)
-                    if matches!(**ty, syn::Type::Path(ref p)
-                        if p.path.segments.last().unwrap().ident == "Result")
-            );
-
-            // collect args for JSON
-            let arg_vals = sig.inputs.iter().filter_map(|arg| {
-                if let FnArg::Typed(p) = arg {
-                    let pat = &p.pat;
-                    Some(quote! { serde_json::to_value(&#pat).unwrap() })
-                } else {
-                    None
+            let returns_result = match &sig.output {
+                syn::ReturnType::Type(_, ty) => {
+                    if let syn::Type::Path(p) = ty.as_ref() {
+                        p.path.segments.last().map_or(false, |seg| seg.ident == "Result")
+                    } else {
+                        false
+                    }
                 }
-            });
+                _ => false,
+            };
+
+
+            let arg_vals: Vec<_> = sig
+            .inputs
+            .iter()
+            .filter_map(|arg| {
+                match arg {
+                    FnArg::Typed(pat) => {
+                        let name = &pat.pat;
+                        Some(quote! { serde_json::to_value(&#name).unwrap() })
+                    }
+                    FnArg::Receiver(_) => None, // skip self/&self/&mut self
+                }
+            })
+            .collect();
 
             if is_async && returns_result {
                 quote! {
@@ -48,12 +56,16 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
                             "args": [#(#arg_vals),*]
                         });
                         // call our injected helper
-                        let json = Self::#helper_fn(
+                        let json = match #helper_fn(
                             format!("http://localhost:6969/{}", #name_str),
                             payload,
                         )
-                        .await
-                        .unwrap_or_else(|e| panic!("mock HTTP failed: {:?}", e));
+                        .await {
+                            Some(val) => val,
+                            None => {
+                                panic!("Error on fetch")
+                            },
+                        };
 
                       let typed = match serde_json::from_value(json.clone()){
                             Ok(v) => Ok(v),
@@ -64,7 +76,7 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
                         typed
                     }
-                   
+
                 }
             } else {
                 quote! { #method }
@@ -76,38 +88,42 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Emit a private async fn helper inside the same module
     let expanded = quote! {
-        impl #self_ty {
-            // inlined helper; no extra deps in downstream crate
-            async fn #helper_fn(
-                url: String,
-                body: serde_json::Value,
-            ) -> Result<serde_json::Value, String> {
-                use ic_cdk::api::management_canister::http_request::{
-                    CanisterHttpRequestArgument, HttpHeader, HttpMethod, http_request,
-                };
-                // no headers for now
-                let req = CanisterHttpRequestArgument {
-                    url,
-                    method: HttpMethod::POST,
-                    body: Some(serde_json::to_string(&body).unwrap().into_bytes()),
-                    max_response_bytes: None,
-                    transform: None,
-                    headers: Vec::<HttpHeader>::new(),
-                };
-                match http_request(req, 200_949_972_000).await {
-                    Ok((resp,)) => {
-                        let s = String::from_utf8(resp.body)
-                            .map_err(|_| "Invalid UTF-8".to_string())?;
-                        serde_json::from_str(&s)
-                            .map_err(|e| format!("JSON parse error: {:?}", e))
-                    }
-                    Err((_, m)) => Err(format!("http_request error: {}", m)),
+        // inlined helper; no extra deps in downstream crate
+        async fn #helper_fn<T: Serialize + std::fmt::Debug>(
+            url: String,
+            body: T,
+        ) -> Option<serde_json::Value> {
+            use ic_cdk::api::management_canister::http_request::{
+                CanisterHttpRequestArgument, HttpHeader, HttpMethod, http_request,
+            };
+            // no headers for now
+            let request = CanisterHttpRequestArgument {
+                url,
+                method: HttpMethod::POST,
+                body: Some(serde_json::to_string(&body).unwrap().into_bytes()),
+                max_response_bytes: None,
+                transform: None,
+                headers: Vec::<HttpHeader>::new(),
+            };
+            match http_request(request, 200_949_972_000).await {
+                //See:https://docs.rs/ic-cdk/latest/ic_cdk/api/management_canister/http_request/struct.HttpResponse.html
+                Ok((response,)) => {
+                    let str_body = String::from_utf8(response.body).expect("Transformed response is not UTF-8 encoded.");
+        
+                    let parsed: serde_json::Value = serde_json::from_str(&str_body).expect("JSON was not well-formatted");
+        
+                    Some(parsed)
+                }
+                Err((_, m)) => {
+                    //Return the error as a string and end the method
+                    panic!("The http_request resulted into error. Error: {m}")
                 }
             }
-
+        }
+        impl #self_ty {
             #(#methods)*
         }
     };
 
-   expanded.into()
+    TokenStream::from(expanded)
 }

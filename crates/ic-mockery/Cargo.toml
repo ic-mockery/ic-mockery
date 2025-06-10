@@ -13,13 +13,13 @@ crate-type = ["rlib"]
 
 
 [dependencies]
-pocket-ic = "9.0.2"
-syn = { version = "2.0", features = ["full"] }
-quote = "1.0"
-serde = "1.0.219"
-serde_json = "1.0.140"
-thiserror = "2.0.12"
-canister = { path = "../../canister" }
+pocket-ic = { workspace = true }
+syn = { version = "^2.0", features = ["full"] }
+quote = "^1.0"
+serde = "^1.0"
+serde_json = "^1.0"
+thiserror = "^2.0"
 
+canister = { path = "../../canister" }
 candid = { workspace = true }
 ic-cdk = { workspace = true }
