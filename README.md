@@ -19,8 +19,17 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ic-mockery = "0.1.0"
-ic-mockery-macro = "0.1.0"
+ic-mockery = { git = "https://github.com/ic-mockery/ic-mockery" }
+ic-mockery-macro = { git = "https://github.com/ic-mockery/ic-mockery" }
+```
+
+Once the crates are published to crates.io, you'll be able to use version numbers instead:
+
+```toml
+# Not yet available - coming soon
+# [dependencies]
+# ic-mockery = "0.1.0"
+# ic-mockery-macro = "0.1.0"
 ```
 
 ## Usage
