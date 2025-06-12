@@ -3,17 +3,23 @@ use std::vec;
 use candid::{decode_one, CandidType, Encode, Principal};
 use pocket_ic::{
     common::rest::{
-        CanisterHttpReply, CanisterHttpResponse, MockCanisterHttpResponse, RawMessageId,
+        CanisterHttpReject, CanisterHttpReply, CanisterHttpResponse, MockCanisterHttpResponse,
+        RawMessageId,
     },
     PocketIc,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+enum MockHttpResult {
+    Reply(Value),
+    Reject { code: u8, message: String },
+}
+
 pub struct AsyncMocker<'a> {
     pic: &'a PocketIc,
     call: Option<Box<dyn FnOnce() -> RawMessageId + 'a>>,
-    responders: Vec<(String, Box<dyn Fn(Value) -> Value + 'a>)>,
+    responders: Vec<(String, Box<dyn Fn(Value) -> MockHttpResult + 'a>)>,
     expected_calls: Vec<(String, Box<dyn Fn(&Value) -> () + 'a>)>,
     max_ticks: usize,
 }
@@ -53,8 +59,21 @@ impl<'a> AsyncMocker<'a> {
     where
         F: Fn(Value) -> Value + 'a,
     {
-        self.responders
-            .push((method.to_string(), Box::new(responder)));
+        self.responders.push((
+            method.to_string(),
+            Box::new(move |args| MockHttpResult::Reply(responder(args))),
+        ));
+        self
+    }
+
+    pub fn mock_fail(mut self, method: &str, message: &'a str) -> Self {
+        self.responders.push((
+            method.to_string(),
+            Box::new(move |_args| MockHttpResult::Reject {
+                code: 1,
+                message: message.to_string(),
+            }),
+        ));
         self
     }
 
@@ -80,37 +99,48 @@ impl<'a> AsyncMocker<'a> {
                     .and_then(Value::as_str)
                     .unwrap_or_default();
 
-                let expected_call = self
+                if let Some(index) = self
                     .expected_calls
                     .iter()
-                    .position(|item| item.0 == *actual_method);
-
-                if expected_call.is_some() {
-                    let (_, verifier) = &self.expected_calls.remove(expected_call.unwrap());
+                    .position(|item| item.0 == actual_method)
+                {
+                    let (_, verifier) = self.expected_calls.remove(index);
                     verifier(&req_json.clone());
                 }
 
-                let responder = self
+                if let Some(index) = self
                     .responders
                     .iter()
-                    .position(|item| item.0 == *actual_method);
+                    .position(|item| item.0 == actual_method)
+                {
+                    let (_, responder) = self.responders.remove(index);
+                    let response = responder(req_json);
 
-                if responder.is_some() {
-                    let (_, responder) = self.responders.remove(responder.unwrap());
-                    let response_json = responder(req_json);
-                    let body =
-                        serde_json::to_vec(&response_json).expect("Failed to serialize response");
+                    let response = match response {
+                        MockHttpResult::Reply(json) => {
+                            let body =
+                                serde_json::to_vec(&json).expect("Failed to serialize response");
+                            CanisterHttpResponse::CanisterHttpReply(CanisterHttpReply {
+                                status: 200,
+                                headers: vec![],
+                                body,
+                            })
+                        }
+                        MockHttpResult::Reject { code, message } => {
+                            CanisterHttpResponse::CanisterHttpReject(CanisterHttpReject {
+                                reject_code: code as u64,
+                                message,
+                            })
+                        }
+                    };
 
                     let mock = MockCanisterHttpResponse {
                         subnet_id: req.subnet_id,
                         request_id: req.request_id,
-                        response: CanisterHttpResponse::CanisterHttpReply(CanisterHttpReply {
-                            status: 200,
-                            headers: vec![],
-                            body,
-                        }),
+                        response,
                         additional_responses: vec![],
                     };
+
                     self.pic.mock_canister_http_response(mock);
                     break;
                 }

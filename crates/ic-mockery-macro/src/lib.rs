@@ -1,82 +1,126 @@
-// crates/ic-mockery-macro/src/lib.rs
-
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, FnArg, ImplItem, ItemImpl};
+use syn::{
+    parse_macro_input, parse_quote, FnArg, GenericArgument, ImplItem, ItemImpl, PathArguments,
+    ReturnType, Type,
+};
 
 #[proc_macro_attribute]
 pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // Parse the impl block
     let input = parse_macro_input!(item as ItemImpl);
     let self_ty = &input.self_ty;
-    // We'll inject the helper once per impl
     let helper_fn = format_ident!("__ic_mockery_http_post_call");
 
-    // Build each method
     let methods = input.items.into_iter().map(|item| {
-        if let ImplItem::Fn(method) = item {
+        if let ImplItem::Fn(mut method) = item {
             let vis = &method.vis;
-            let sig = &method.sig;
+            let sig = &mut method.sig;
             let name_str = sig.ident.to_string();
 
             let is_async = sig.asyncness.is_some();
-            let returns_result = match &sig.output {
-                syn::ReturnType::Type(_, ty) => {
-                    if let syn::Type::Path(p) = ty.as_ref() {
-                        p.path.segments.last().map_or(false, |seg| seg.ident == "Result")
-                    } else {
-                        false
+
+            let error_type_opt = match &sig.output {
+                ReturnType::Type(_, ty) => match ty.as_ref() {
+                    Type::Path(type_path) => {
+                        let segment = type_path.path.segments.last().unwrap();
+
+                        if segment.ident == "Result" {
+                            if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                                let mut type_args = args.args.iter();
+                                type_args.next();
+                                match type_args.next() {
+                                    Some(GenericArgument::Type(err_ty)) => Some(err_ty.clone()),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        } else if segment.ident == "CallResult" {
+                            // Known alias: type CallResult<T> = Result<T, (RejectionCode, String)>
+                            Some(parse_quote!((RejectionCode, String)))
+                        } else {
+                            None
+                        }
                     }
-                }
-                _ => false,
+                    _ => None,
+                },
+                _ => None,
             };
 
+            let returns_result = error_type_opt.is_some();
 
-            let arg_vals: Vec<_> = sig
-            .inputs
-            .iter()
-            .filter_map(|arg| {
-                match arg {
-                    FnArg::Typed(pat) => {
-                        let name = &pat.pat;
-                        Some(quote! { serde_json::to_value(&#name).unwrap() })
-                    }
-                    FnArg::Receiver(_) => None, // skip self/&self/&mut self
+            let arg_vals: Vec<_> = sig.inputs.iter().filter_map(|arg| match arg {
+                FnArg::Typed(pat) => {
+                    let name = &pat.pat;
+                    Some(quote! { serde_json::to_value(&#name).unwrap() })
                 }
-            })
-            .collect();
+                FnArg::Receiver(_) => None,
+            }).collect();
 
             if is_async && returns_result {
+                let json_call = match &error_type_opt {
+                    Some(error_ty) => {
+                        let is_string = matches!(
+                            error_ty,
+                            Type::Path(p) if p.path.segments.last().unwrap().ident == "String"
+                        );
+
+                        let is_rejection_pair = matches!(
+                            error_ty,
+                            Type::Tuple(t) if t.elems.len() == 2 &&
+                                matches!(&t.elems[0], Type::Path(p) if p.path.segments.last().unwrap().ident == "RejectionCode") &&
+                                matches!(&t.elems[1], Type::Path(p) if p.path.segments.last().unwrap().ident == "String")
+                        );
+
+                        if is_string {
+                            quote! {
+                                let json = #helper_fn(
+                                    format!("http://localhost:6969/{}", #name_str),
+                                    payload,
+                                ).await?;
+                            }
+                        } else if is_rejection_pair {
+                            quote! {
+                                let json = #helper_fn(
+                                    format!("http://localhost:6969/{}", #name_str),
+                                    payload,
+                                ).await.map_err(|e| (ic_cdk::api::call::RejectionCode::CanisterReject, e))?;
+                            }
+                        } else {
+                            quote! {
+                                let json = #helper_fn(
+                                    format!("http://localhost:6969/{}", #name_str),
+                                    payload,
+                                ).await?;
+                            }
+                        }
+                    }
+                    None => quote! {
+                        let json = #helper_fn(
+                            format!("http://localhost:6969/{}", #name_str),
+                            payload,
+                        ).await?;
+                    },
+                };
+
                 quote! {
                     #vis #sig {
                         use serde_json::json;
-                        // build payload
+
                         let payload = json!({
                             "method": #name_str,
                             "args": [#(#arg_vals),*]
                         });
-                        // call our injected helper
-                        let json = match #helper_fn(
-                            format!("http://localhost:6969/{}", #name_str),
-                            payload,
-                        )
-                        .await {
-                            Some(val) => val,
-                            None => {
-                                panic!("Error on fetch")
-                            },
-                        };
 
-                      let typed = match serde_json::from_value(json.clone()){
+                        #json_call
+
+                        let typed = match serde_json::from_value(json.clone()) {
                             Ok(v) => Ok(v),
-                            Err(e) =>  {
-                                panic!("Error on deserialization {:?} \n {:?}",e, json)
-                            }
+                            Err(e) => panic!("Error on deserialization {:?} \n {:?}", e, json),
                         };
 
                         typed
                     }
-
                 }
             } else {
                 quote! { #method }
@@ -86,17 +130,15 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
-    // Emit a private async fn helper inside the same module
     let expanded = quote! {
-        // inlined helper; no extra deps in downstream crate
-        async fn #helper_fn<T: Serialize + std::fmt::Debug>(
+        async fn #helper_fn<T: serde::Serialize + std::fmt::Debug>(
             url: String,
             body: T,
-        ) -> Option<serde_json::Value> {
+        ) -> std::result::Result<serde_json::Value, String> {
             use ic_cdk::api::management_canister::http_request::{
                 CanisterHttpRequestArgument, HttpHeader, HttpMethod, http_request,
             };
-            // no headers for now
+
             let request = CanisterHttpRequestArgument {
                 url,
                 method: HttpMethod::POST,
@@ -105,21 +147,19 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 transform: None,
                 headers: Vec::<HttpHeader>::new(),
             };
+
             match http_request(request, 200_949_972_000).await {
-                //See:https://docs.rs/ic-cdk/latest/ic_cdk/api/management_canister/http_request/struct.HttpResponse.html
                 Ok((response,)) => {
-                    let str_body = String::from_utf8(response.body).expect("Transformed response is not UTF-8 encoded.");
-        
-                    let parsed: serde_json::Value = serde_json::from_str(&str_body).expect("JSON was not well-formatted");
-        
-                    Some(parsed)
+                    let str_body = String::from_utf8(response.body)
+                        .expect("Transformed response is not UTF-8 encoded.");
+                    let parsed: serde_json::Value = serde_json::from_str(&str_body)
+                        .expect("JSON was not well-formatted");
+                    Ok(parsed)
                 }
-                Err((_, m)) => {
-                    //Return the error as a string and end the method
-                    panic!("The http_request resulted into error. Error: {m}")
-                }
+                Err(e) => Err(format!("http_request error: {:?}", e)),
             }
         }
+
         impl #self_ty {
             #(#methods)*
         }
