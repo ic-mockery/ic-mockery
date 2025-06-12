@@ -75,13 +75,11 @@ impl<'a> AsyncMocker<'a> {
                 let req_json: Value =
                     serde_json::from_slice(&req.body).expect("Invalid JSON in HTTP body");
 
-                println!("Next tick {}", req_json);
                 let actual_method = req_json
                     .get("method")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
 
-                println!("Actual methid {}", actual_method);
                 let expected_call = self
                     .expected_calls
                     .iter()
