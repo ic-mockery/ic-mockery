@@ -21,8 +21,8 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ic-mockery = { git = "https://github.com/liquidium/ic-mockery" }
-ic-mockery-macro = { git = "https://github.com/liquidium/ic-mockery" }
+ic-mockery = { git = "https://github.com/ic-mockery/ic-mockery" }
+ic-mockery-macro = { git = "https://github.com/ic-mockery/ic-mockery" }
 ```
 
 Once the crates are published to crates.io, you'll be able to use version numbers instead:
