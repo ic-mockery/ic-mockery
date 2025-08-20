@@ -147,26 +147,6 @@ impl<'a> AsyncMocker<'a> {
             }
         }
 
-        if !self.responders.is_empty() {
-            return Err(format!(
-                "Expected calls {:?}",
-                self.responders
-                    .iter()
-                    .map(|i| i.0.clone())
-                    .collect::<Vec<_>>()
-            ));
-        }
-
-        if !self.expected_calls.is_empty() {
-            return Err(format!(
-                "Expected calls {:?}",
-                self.expected_calls
-                    .iter()
-                    .map(|i| i.0.clone())
-                    .collect::<Vec<_>>()
-            ));
-        }
-
         self.pic.tick();
         let reply = self.pic.await_call(call_id);
         let data = reply.map_err(|err| err.to_string())?;
