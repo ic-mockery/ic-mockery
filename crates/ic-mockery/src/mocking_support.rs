@@ -20,7 +20,7 @@ pub struct AsyncMocker<'a> {
     pic: &'a PocketIc,
     call: Option<Box<dyn FnOnce() -> RawMessageId + 'a>>,
     responders: Vec<(String, Box<dyn Fn(Value) -> MockHttpResult + 'a>)>,
-    expected_calls: Vec<(String, Box<dyn Fn(&Value) -> () + 'a>)>,
+    expected_calls: Vec<(String, Box<dyn Fn(&Value) + 'a>)>,
     max_ticks: usize,
 }
 
@@ -41,7 +41,7 @@ impl<'a> AsyncMocker<'a> {
     {
         self.call = Some(Box::new(move || {
             self.pic
-                .submit_call(canister, from, &method, Encode!(&args).unwrap())
+                .submit_call(canister, from, method, Encode!(&args).unwrap())
                 .unwrap()
         }));
         self
