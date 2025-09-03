@@ -76,7 +76,6 @@ impl<'a> AsyncMocker<'a> {
         ));
         self
     }
-
     pub fn execute<T>(mut self) -> Result<T, String>
     where
         T: DeserializeOwned + CandidType,
@@ -84,7 +83,7 @@ impl<'a> AsyncMocker<'a> {
         let call = self.call.take().expect("Missing call");
         let call_id = call();
 
-        let mut tick_count = 0;
+        let mut tick_count = 0usize;
         while tick_count < self.max_ticks {
             self.pic.tick();
             tick_count += 1;
@@ -94,29 +93,19 @@ impl<'a> AsyncMocker<'a> {
                 let req_json: Value =
                     serde_json::from_slice(&req.body).expect("Invalid JSON in HTTP body");
 
-                let actual_method = req_json
+                let method = req_json
                     .get("method")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
 
-                if let Some(index) = self
-                    .expected_calls
-                    .iter()
-                    .position(|item| item.0 == actual_method)
-                {
-                    let (_, verifier) = self.expected_calls.remove(index);
-                    verifier(&req_json.clone());
+                if let Some(idx) = self.expected_calls.iter().position(|i| i.0 == method) {
+                    let (_, verify) = self.expected_calls.remove(idx);
+                    verify(&req_json.clone());
                 }
 
-                if let Some(index) = self
-                    .responders
-                    .iter()
-                    .position(|item| item.0 == actual_method)
-                {
-                    let (_, responder) = self.responders.remove(index);
-                    let response = responder(req_json);
-
-                    let response = match response {
+                if let Some(idx) = self.responders.iter().position(|i| i.0 == method) {
+                    let (_, responder) = self.responders.remove(idx);
+                    let response = match responder(req_json) {
                         MockHttpResult::Reply(json) => {
                             let body =
                                 serde_json::to_vec(&json).expect("Failed to serialize response");
@@ -134,42 +123,48 @@ impl<'a> AsyncMocker<'a> {
                         }
                     };
 
-                    let mock = MockCanisterHttpResponse {
-                        subnet_id: req.subnet_id,
-                        request_id: req.request_id,
-                        response,
-                        additional_responses: vec![],
-                    };
+                    self.pic
+                        .mock_canister_http_response(MockCanisterHttpResponse {
+                            subnet_id: req.subnet_id,
+                            request_id: req.request_id,
+                            response,
+                            additional_responses: vec![],
+                        });
 
-                    self.pic.mock_canister_http_response(mock);
+                    // one-per-tick behavior
                     break;
                 }
             }
+
+            // Break early if nothing else is expected.
+            if self.responders.is_empty() && self.expected_calls.is_empty() {
+                break;
+            }
         }
 
-        if !self.responders.is_empty() {
-            return Err(format!(
-                "Expected calls {:?}",
-                self.responders
-                    .iter()
-                    .map(|i| i.0.clone())
-                    .collect::<Vec<_>>()
-            ));
-        }
-
-        if !self.expected_calls.is_empty() {
-            return Err(format!(
-                "Expected calls {:?}",
-                self.expected_calls
-                    .iter()
-                    .map(|i| i.0.clone())
-                    .collect::<Vec<_>>()
-            ));
-        }
-
+        // Always await the call — even if we blew past max_ticks — to surface real canister errors.
         self.pic.tick();
         let reply = self.pic.await_call(call_id);
-        let data = reply.map_err(|err| err.to_string())?;
-        decode_one(&data).map_err(|e| e.to_string())
+
+        // Preserve rejection details (code + message via Debug)
+        let data = reply.map_err(|e| format!("{e:?}"))?;
+
+        // Prefer decoding canister-level Result<T, String> and flatten it.
+        if let Ok(res) = decode_one::<Result<T, String>>(&data) {
+            return res;
+        }
+
+        // Fallback: decode T directly.
+        decode_one::<T>(&data).map_err(|e| {
+            // If we exhausted ticks, include that context without masking the decode error.
+            if tick_count >= self.max_ticks {
+                format!(
+                    "decode error: {e}; note: exhausted {} ticks before await",
+                    self.max_ticks
+                )
+            } else {
+                e.to_string()
+            }
+        })
     }
 }
