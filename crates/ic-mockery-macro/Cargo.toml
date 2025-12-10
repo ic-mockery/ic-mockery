@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 
 resolver = "2"
 
+[lints.clippy]
+type_complexity = "allow"
+
 [features]
 ic-mockery = []
 

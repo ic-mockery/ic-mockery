@@ -11,6 +11,9 @@ resolver = "2"
 [lib]
 crate-type = ["rlib"]
 
+[lints.clippy]
+type_complexity = "allow"
+
 
 [dependencies]
 pocket-ic = { workspace = true }

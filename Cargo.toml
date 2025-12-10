@@ -15,11 +15,11 @@ keywords = ["internet-computer", "dfinity", "testing", "rust","mocking", "canist
 categories = ["development-tools::testing", "wasm"]
 
 [workspace.dependencies]
-candid = "^0.10.0"
-ic-cdk = "^0.17"
-ic-cdk-macros = "^0.17"
-pocket-ic = "^7.0"
-serde = "^1.0"
+candid = "^0.10.20"
+ic-cdk = "^0.19.0"
+ic-cdk-macros = "^0.19.0"
+pocket-ic = "^11.0.0"
+serde = "^1.0.228"
 serde_json = "^1.0"
 thiserror = "^2.0"
 syn = { version = "^2.0", features = ["full"] }

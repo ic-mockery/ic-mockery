@@ -135,28 +135,29 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
             url: String,
             body: T,
         ) -> std::result::Result<serde_json::Value, String> {
-            use ic_cdk::api::management_canister::http_request::{
-                CanisterHttpRequestArgument, HttpHeader, HttpMethod, http_request,
+            use ic_cdk::management_canister::{
+                http_request, HttpHeader, HttpMethod, HttpRequestArgs,
             };
 
-            let request = CanisterHttpRequestArgument {
+            let request = HttpRequestArgs {
                 url,
-                method: HttpMethod::POST,
-                body: Some(serde_json::to_string(&body).unwrap().into_bytes()),
                 max_response_bytes: None,
-                transform: None,
+                method: HttpMethod::POST,
                 headers: Vec::<HttpHeader>::new(),
+                body: Some(serde_json::to_vec(&body).expect("Failed to serialize body")),
+                transform: None,
+                is_replicated: None,
             };
 
-            match http_request(request, 200_949_972_000).await {
-                Ok((response,)) => {
+            match http_request(&request).await {
+                Ok(response) => {
                     let str_body = String::from_utf8(response.body)
-                        .expect("Transformed response is not UTF-8 encoded.");
+                        .expect("HTTP response body is not UTF-8 encoded");
                     let parsed: serde_json::Value = serde_json::from_str(&str_body)
-                        .expect("JSON was not well-formatted");
+                        .expect("HTTP response JSON was not well-formatted");
                     Ok(parsed)
                 }
-                Err(e) => Err(format!("http_request error: {:?}", e)),
+                Err(e) => Err(format!("http_request error: {:?}", e,)),
             }
         }
 
