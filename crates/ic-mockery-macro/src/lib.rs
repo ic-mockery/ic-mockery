@@ -36,8 +36,8 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
                                 None
                             }
                         } else if segment.ident == "CallResult" {
-                            // Known alias: type CallResult<T> = Result<T, (RejectionCode, String)>
-                            Some(parse_quote!((RejectionCode, String)))
+                            // Known alias (ic-cdk 0.19+): type CallResult<T> = Result<T, ic_cdk::call::Error>
+                            Some(parse_quote!(ic_cdk::call::Error))
                         } else {
                             None
                         }
@@ -72,6 +72,13 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
                                 matches!(&t.elems[1], Type::Path(p) if p.path.segments.last().unwrap().ident == "String")
                         );
 
+                        let is_call_error = matches!(
+                            error_ty,
+                            Type::Path(p)
+                                if p.path.segments.last().unwrap().ident == "Error"
+                                    && p.path.segments.iter().any(|seg| seg.ident == "call" || seg.ident == "ic_cdk")
+                        );
+
                         if is_string {
                             quote! {
                                 let json = #helper_fn(
@@ -85,6 +92,18 @@ pub fn mock_async_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
                                     format!("http://localhost:6969/{}", #name_str),
                                     payload,
                                 ).await.map_err(|e| (ic_cdk::api::call::RejectionCode::CanisterReject, e))?;
+                            }
+                        } else if is_call_error {
+                            quote! {
+                                let json = #helper_fn(
+                                    format!("http://localhost:6969/{}", #name_str),
+                                    payload,
+                                ).await.map_err(|e| ic_cdk::call::Error::CallRejected(
+                                    ic_cdk::call::CallRejected::with_rejection(
+                                        ic_cdk::call::RejectCode::CanisterReject as u32,
+                                        e,
+                                    )
+                                ))?;
                             }
                         } else {
                             quote! {
