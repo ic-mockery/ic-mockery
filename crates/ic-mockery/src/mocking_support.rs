@@ -144,7 +144,7 @@ impl<'a> AsyncMocker<'a> {
 
         // Always await the call — even if we blew past max_ticks — to surface real canister errors.
         self.pic.tick();
-        let reply = self.pic.await_call(call_id);
+        let reply = self.pic.await_call_no_ticks(call_id);
 
         // Preserve rejection details (code + message via Debug)
         let data = reply.map_err(|e| format!("{e:?}"))?;
