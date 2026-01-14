@@ -76,9 +76,11 @@ impl<'a> AsyncMocker<'a> {
         ));
         self
     }
-    pub fn execute<T>(mut self) -> Result<T, String>
+    fn execute_with<T, F, E>(mut self, awaiter: F, tick_before_await: bool) -> Result<T, String>
     where
         T: DeserializeOwned + CandidType,
+        F: FnOnce(&PocketIc, RawMessageId) -> Result<Vec<u8>, E>,
+        E: std::fmt::Debug,
     {
         let call = self.call.take().expect("Missing call");
         let call_id = call();
@@ -143,8 +145,10 @@ impl<'a> AsyncMocker<'a> {
         }
 
         // Always await the call — even if we blew past max_ticks — to surface real canister errors.
-        self.pic.tick();
-        let reply = self.pic.await_call_no_ticks(call_id);
+        if tick_before_await {
+            self.pic.tick();
+        }
+        let reply = awaiter(self.pic, call_id);
 
         // Preserve rejection details (code + message via Debug)
         let data = reply.map_err(|e| format!("{e:?}"))?;
@@ -166,5 +170,19 @@ impl<'a> AsyncMocker<'a> {
                 e.to_string()
             }
         })
+    }
+
+    pub fn execute<T>(self) -> Result<T, String>
+    where
+        T: DeserializeOwned + CandidType,
+    {
+        self.execute_with(|pic, call_id| pic.await_call(call_id), true)
+    }
+
+    pub fn execute_no_ticks<T>(mut self) -> Result<T, String>
+    where
+        T: DeserializeOwned + CandidType,
+    {
+        self.execute_with(|pic, call_id| pic.await_call_no_ticks(call_id), false)
     }
 }
