@@ -30,7 +30,7 @@ impl<'a> AsyncMocker<'a> {
             pic,
             call: None,
             responders: vec![],
-            max_ticks: 50,
+            max_ticks: 500,
             expected_calls: vec![],
         }
     }
