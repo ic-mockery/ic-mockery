@@ -11,6 +11,10 @@ use serde_json::{json, to_value};
 #[derive(Debug, PartialEq, CandidType, Deserialize)]
 struct Dummy(u8);
 
+// PocketIC's manual rounds advance simulated time by 1ns. This bound catches
+// the old 500-round wait without depending on the speed of the test host.
+const MAX_COMPLETION_ADVANCE_NANOS: u64 = 100;
+
 #[test]
 #[should_panic(expected = "Missing call")]
 fn execute_without_call_panics() {
@@ -31,8 +35,7 @@ fn builder_methods_chain() {
         .mock("foo", |_req| json!({ "foo": 42 }));
 }
 
-#[test]
-fn basic_execute_flow_should_return_value() {
+fn setup_canister() -> (PocketIc, Principal) {
     let pic = PocketIcBuilder::new()
         .with_application_subnet() // to deploy the test depp
         .build();
@@ -46,7 +49,15 @@ fn basic_execute_flow_should_return_value() {
 
     pic.install_canister(canister, wasm, vec![], None);
 
-    AsyncMocker::new(&pic)
+    (pic, canister)
+}
+
+#[test]
+fn basic_execute_flow_should_return_value() {
+    let (pic, canister) = setup_canister();
+    let before = pic.get_time().as_nanos_since_unix_epoch();
+
+    let response = AsyncMocker::new(&pic)
         .call(
             canister,
             Principal::anonymous(),
@@ -64,6 +75,34 @@ fn basic_execute_flow_should_return_value() {
             to_value(response).unwrap()
         })
         .mock("prepare_greet", |_| to_value::<()>(()).unwrap())
+        .mock("unused", |_| panic!("unused response must not be consumed"))
         .execute::<GreetResponse>()
         .expect("mocking failed");
+
+    assert_eq!(response.message, "Wizard");
+    assert!(matches!(response.status, canister::Status::Success));
+    let advanced_nanos = pic.get_time().as_nanos_since_unix_epoch() - before;
+    assert!(
+        advanced_nanos < MAX_COMPLETION_ADVANCE_NANOS,
+        "completed reply advanced {advanced_nanos}ns"
+    );
+}
+
+#[test]
+fn rejected_ingress_does_not_wait_for_unused_responses() {
+    let (pic, canister) = setup_canister();
+    let before = pic.get_time().as_nanos_since_unix_epoch();
+
+    let error = AsyncMocker::new(&pic)
+        .call(canister, Principal::anonymous(), "missing_method", ())
+        .mock("unused", |_| panic!("unused response must not be consumed"))
+        .execute_no_ticks::<()>()
+        .expect_err("missing method must reject the ingress call");
+
+    assert!(error.contains("missing_method"), "{error}");
+    let advanced_nanos = pic.get_time().as_nanos_since_unix_epoch() - before;
+    assert!(
+        advanced_nanos < MAX_COMPLETION_ADVANCE_NANOS,
+        "completed rejection advanced {advanced_nanos}ns"
+    );
 }

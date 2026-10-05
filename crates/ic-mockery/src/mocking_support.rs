@@ -90,6 +90,12 @@ impl<'a> AsyncMocker<'a> {
             self.pic.tick();
             tick_count += 1;
 
+            // Responders may cover alternative execution paths. Once ingress has
+            // replied or rejected, unused responses cannot justify more rounds.
+            if self.pic.ingress_status(call_id.clone()).is_some() {
+                break;
+            }
+
             let requests = self.pic.get_canister_http();
             for req in requests {
                 let req_json: Value =
