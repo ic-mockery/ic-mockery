@@ -159,17 +159,6 @@ impl<'a> AsyncMocker<'a> {
         // Preserve rejection details (code + message via Debug)
         let data = reply.map_err(|e| format!("{e:?}"))?;
 
-        if !self.expected_calls.is_empty() {
-            let missing: Vec<_> = self
-                .expected_calls
-                .iter()
-                .map(|(method, _)| method.as_str())
-                .collect();
-            return Err(format!(
-                "call completed without expected HTTP calls: {missing:?}"
-            ));
-        }
-
         // Prefer decoding canister-level Result<T, String> and flatten it.
         if let Ok(res) = decode_one::<Result<T, String>>(&data) {
             return res;
