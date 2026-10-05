@@ -25,6 +25,9 @@ ic-mockery = { git = "https://github.com/ic-mockery/ic-mockery" }
 ic-mockery-macro = { git = "https://github.com/ic-mockery/ic-mockery" }
 ```
 
+The client helpers use `pocket-ic` 16. Use the same major version in your tests
+and a compatible PocketIC server; set `POCKET_IC_BIN` to use an installed server.
+
 Once the crates are published to crates.io, you'll be able to use version numbers instead:
 
 ```toml
@@ -201,6 +204,11 @@ The library supports more advanced scenarios like:
 - Verifying expected calls were made
 - Customizing response based on request parameters
 - Handling different error types (String, custom errors, RejectionCode pairs)
+
+Mock responses may cover alternative execution paths. The driver stops once the
+ingress call replies or rejects, even if optional responses remain unused, while
+preserving rejection details. Both `execute` and `execute_no_ticks` use this
+completion check; `execute_no_ticks` skips only the final tick before awaiting.
 
 #### Using `with_call` and `mock_fail`
 

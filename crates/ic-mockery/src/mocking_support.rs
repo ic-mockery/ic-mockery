@@ -90,6 +90,12 @@ impl<'a> AsyncMocker<'a> {
             self.pic.tick();
             tick_count += 1;
 
+            // Responders may cover alternative execution paths. Once ingress has
+            // replied or rejected, unused responses cannot justify more rounds.
+            if self.pic.ingress_status(call_id.clone()).is_some() {
+                break;
+            }
+
             let requests = self.pic.get_canister_http();
             for req in requests {
                 let req_json: Value =
@@ -152,6 +158,17 @@ impl<'a> AsyncMocker<'a> {
 
         // Preserve rejection details (code + message via Debug)
         let data = reply.map_err(|e| format!("{e:?}"))?;
+
+        if !self.expected_calls.is_empty() {
+            let missing: Vec<_> = self
+                .expected_calls
+                .iter()
+                .map(|(method, _)| method.as_str())
+                .collect();
+            return Err(format!(
+                "call completed without expected HTTP calls: {missing:?}"
+            ));
+        }
 
         // Prefer decoding canister-level Result<T, String> and flatten it.
         if let Ok(res) = decode_one::<Result<T, String>>(&data) {
